@@ -1,0 +1,6 @@
+[Unit]
+Description=DDC/CI Brightness Control Daemon
+
+[Service]
+ExecStart=/home/james/.local/bin/brightnessd
+Restart=on-failure
