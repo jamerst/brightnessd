@@ -15,7 +15,7 @@ brightnessd is designed to be run as a user service with systemd. To set it up p
 1. Copy `brightnessd.py` to a location in your home directory, I would recommend `~/.local/bin/`.
 1. Modify the `ExecStart` line of `brightnessd.service` to point to the location of `brightnessd.py`. Note that this must be an absolute path, it cannot be relative or use variables such as `$HOME`.
 1. Copy `brightnessd.service` to `~/.local/share/systemd/user/`
-1. Run `systemctl --user start brightnessd` to start the daemon
+1. Run `systemctl --user enable brightnessd` `systemctl --user start brightnessd` to enable and start the daemon
 
 ## Usage
 brightnessd supports both manual brightness changing and automatic fading. Interaction is through the `net.jtattersall.brightness` DBus Service.
