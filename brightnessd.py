@@ -1,5 +1,6 @@
 #!/usr/bin/python
 
+import sys
 import threading
 from time import sleep
 
@@ -12,6 +13,8 @@ from dasbus.server.template import InterfaceTemplate
 from dasbus.typing import List
 
 from monitorcontrol.monitorcontrol import get_monitors
+
+killed = False
 
 ERROR_MAPPER = ErrorMapper()
 BUS = SessionMessageBus(error_mapper=ERROR_MAPPER)
@@ -42,18 +45,16 @@ class Brightness():
     ceaseFade = False
     fading = False
 
-    def _getCurrent(self):
-        brightnesses = []
-        for monitor in get_monitors():
-            with monitor:
-                brightnesses.append(monitor.get_luminance())
-
-        return brightnesses
-
     def _change(self, amount: int):
-        brightnesses = []
-        for monitor in get_monitors():
-            with monitor:
+        currentBrightnesses = []
+        newBrightnesses = []
+
+        try:
+            monitors = get_monitors()
+
+            for i, monitor in enumerate(monitors):
+                monitor.__enter__()
+
                 current = monitor.get_luminance()
                 new = current + amount
 
@@ -62,55 +63,79 @@ class Brightness():
                 elif (new > 100):
                     new = 100
 
-                brightnesses.append(new)
+                currentBrightnesses.append(current)
+                newBrightnesses.append(new)
 
-                if (new != current):
-                    monitor.set_luminance(new)
+            # set brightnesses separately to minimise the delay between monitors
+            # DDC has a mandatory wait time, so this causes delay for each monitor when there are two DDC calls in the same loop
+            for i, monitor in enumerate(monitors):
+                if (newBrightnesses[i] != currentBrightnesses[i]):
+                    monitor.set_luminance(newBrightnesses[i])
 
-        return brightnesses
+            return newBrightnesses
 
-    def _changeTo(self, amount: int, target: int):
+        finally:
+            for monitor in monitors:
+                monitor.__exit__(None, None, None)
+
+    def _changeTo(self, amount: int, target: int, monitors: List, currentBrightnesses: List[int]):
         atTarget = True
-        for monitor in get_monitors():
-            with monitor:
-                current = monitor.get_luminance()
-                if (current == target):
-                    atTarget = atTarget and True
-                    continue
-                else:
-                    atTarget = False
+        for i, monitor in enumerate(monitors):
+            current = currentBrightnesses[i]
+            if (current == target):
+                atTarget = atTarget and True
+                continue
+            else:
+                atTarget = False
 
-                new = current + amount
+            new = current + amount
 
-                if (amount < 0 and new < target):
-                    new = target
-                elif (amount > 0 and new >= target):
-                    new = target
+            if (amount < 0 and new < target):
+                new = target
+            elif (amount > 0 and new >= target):
+                new = target
 
-                monitor.set_luminance(new)
+            monitor.set_luminance(new)
+            currentBrightnesses[i] = new
 
-        return atTarget
+        return (atTarget, currentBrightnesses)
 
-    def _doFade(self, step: int, target: int, interval: int):
+    def _doFade(self, target: int, time: int):
         print('Starting fade')
+        monitors = get_monitors()
+
         try:
+            current = []
+            for monitor in monitors:
+                monitor.__enter__()
+                current.append(monitor.get_luminance())
+
+            toChange = [b for b in current if b != target]
+            if len(toChange) == 0:
+                return
+
+            maxBrightness = max(current)
+            interval = time / abs(maxBrightness - target)
+            step = -1 if maxBrightness > target else 1
+
             atTarget = False
             self.fading = True
-            while (not atTarget and not self.ceaseFade):
-                atTarget = self._changeTo(step, target)
+            while (not atTarget and not self.ceaseFade and not killed):
+                atTarget, current = self._changeTo(step, target, monitors, current)
 
                 if (not atTarget):
                     sleep(interval)
 
             print('Fade complete/stopped')
-        except:
-            print('Fade error')
+
         finally:
             self.ceaseFade = False
             self.fading = False
 
+            for monitor in monitors:
+                monitor.__exit__(None, None, None)
+
     def ChangeBrightness(self, amount: int) -> List[int]:
-        print(f'Changing brightness by {amount}%')
         self.ceaseFade = True
         return self._change(amount)
 
@@ -118,17 +143,9 @@ class Brightness():
         if self.fading:
             raise BrightnessError('Fade already in progress')
 
-        monitors = [b for b in self._getCurrent() if b != target]
-
-        if (len(monitors) == 0):
-            return
-
-        maxBrightness = max(monitors)
-        interval = time / abs(maxBrightness - target)
-        step = -1 if maxBrightness > target else 1
-
         self.ceaseFade = False
-        thread = threading.Thread(target=self._doFade, args=(step, target, interval))
+        thread = threading.Thread(target=self._doFade, args=(target, time))
+        thread.daemon = True
         thread.start()
 
     def Stop(self):
@@ -149,4 +166,5 @@ try:
     loop.run()
 
 finally:
+    killed = True
     BUS.disconnect()
