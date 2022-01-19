@@ -95,7 +95,16 @@ class Brightness():
             elif (amount > 0 and new >= target):
                 new = target
 
-            monitor.set_luminance(new)
+            failures = 0
+            while failures < 10:
+                try:
+                    monitor.set_luminance(new)
+                    break
+                except:
+                    print(f'Failed to set brightness, retry number {failures + 1}')
+                    failures += 1
+                    sleep(1)
+
             currentBrightnesses[i] = new
 
         return (atTarget, currentBrightnesses)
